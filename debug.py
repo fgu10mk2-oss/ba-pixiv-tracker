@@ -10,7 +10,7 @@ tag = "小鳥遊ホシノ"
 if st.button("検証開始"):
     # --- 大百科 ---
     st.subheader("① pixiv大百科")
-    dic_url = f"https://dic.pixiv.net/a/{quote(tag)}"
+    dic_url = f"https://dic.pixiv.net/en/"
     try:
         r = requests.get(dic_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         st.write("STATUS:", r.status_code)
