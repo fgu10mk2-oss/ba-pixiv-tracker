@@ -118,7 +118,7 @@ def check(tag: str) -> dict:
             novel  = int(novel_match[0].replace(",", "")) if novel_match else 0
             kenzen = illust + novel
 
-        time.sleep(2)
+        time.sleep(0.2)
 
         dic_url = f"https://dic.pixiv.net/a/{quote(tag)}"
         dic_response = requests.get(dic_url, headers={"User-Agent": "Mozilla/5.0"})
@@ -133,7 +133,7 @@ def check(tag: str) -> dict:
         r18   = total - kenzen
         ratio = round(1 - (kenzen / total), 4) if total > 0 else 0.0
 
-        time.sleep(2)
+        time.sleep(0.2)
 
         return {"total": total, "r18": r18, "kenzen": kenzen, "ratio": ratio}
 
