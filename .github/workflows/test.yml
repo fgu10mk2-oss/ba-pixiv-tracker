@@ -1,0 +1,40 @@
+name: 接続テスト
+
+on:
+  workflow_dispatch:  # 手動実行ボタン
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Python セットアップ
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: ライブラリインストール
+        run: pip install requests beautifulsoup4
+
+      - name: 接続テスト実行
+        run: |
+          python3 << 'EOF'
+          import requests
+          import re
+          from urllib.parse import quote
+
+          tag = "小鳥遊ホシノ"
+
+          # 大百科
+          dic_url = f"https://dic.pixiv.net/a/{quote(tag)}"
+          r = requests.get(dic_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+          print("大百科 STATUS:", r.status_code)
+          m = re.findall(r'"pixivWorkCount":(\d+)', r.text)
+          print("pixivWorkCount:", m)
+
+          # pixiv本体
+          url = f"https://www.pixiv.net/tags/{quote(tag)}"
+          r2 = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+          print("pixiv本体 STATUS:", r2.status_code)
+          illust = re.findall(r'小説。([\d,]+)件のイラスト', r2.text)
+          print("illust_match:", illust[:2])
+          EOF
