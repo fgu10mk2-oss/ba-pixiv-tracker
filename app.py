@@ -8,16 +8,15 @@ import pandas as pd
 import io
 import csv
 import base64
-import requests
-from github import Github
+from github import Github, Auth
 from scraper import run_scraping
 
 # -----------------------------------------------
 # 定数
 # -----------------------------------------------
-GITHUB_REPO  = st.secrets.get("GITHUB_REPO", "")   # 例: "yourname/yourrepo"
-GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")  # GitHub PAT
-CSV_PATH     = "data/result.csv"                    # リポジトリ内のCSVパス
+GITHUB_REPO  = st.secrets.get("GITHUB_REPO", "")
+GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
+CSV_PATH     = "data/result.csv"
 
 # -----------------------------------------------
 # ページ設定
@@ -31,43 +30,46 @@ st.set_page_config(
 st.title("📊 ブルーアーカイブ pixiv R-18率調査ツール")
 st.caption("Wikipediaからキャラ一覧を取得し、pixivの全件数・健全件数・R-18率を集計します。")
 
+
 # -----------------------------------------------
-# GitHubからCSVを読み込む
+# GitHub操作ヘルパー
 # -----------------------------------------------
+def get_github_repo():
+    auth = Auth.Token(GITHUB_TOKEN)
+    g    = Github(auth=auth)
+    return g.get_repo(GITHUB_REPO)
+
+
 @st.cache_data(ttl=60)
 def load_csv_from_github():
-    """GitHubリポジトリのCSVを読み込む"""
+    """GitHubリポジトリのCSVを読み込む。存在しない場合はNoneを返す"""
     try:
-        g    = Github(GITHUB_TOKEN)
-        repo = g.get_repo(GITHUB_REPO)
-        file = repo.get_contents(CSV_PATH)
+        repo    = get_github_repo()
+        file    = repo.get_contents(CSV_PATH)
         content = base64.b64decode(file.content).decode("utf-8-sig")
-        df = pd.read_csv(io.StringIO(content))
+        df      = pd.read_csv(io.StringIO(content))
         return df, file.sha
-    except Exception as e:
+    except Exception:
         return None, None
 
 
-def push_csv_to_github(rows: list, current_sha: str):
-    """CSVをGitHubリポジトリにpushする"""
-    g    = Github(GITHUB_TOKEN)
-    repo = g.get_repo(GITHUB_REPO)
+def push_csv_to_github(rows: list):
+    """CSVをGitHubリポジトリにpushする（新規作成・更新を自動判定）"""
+    repo = get_github_repo()
 
-    # CSVテキストを生成
     buf = io.StringIO()
     writer = csv.writer(buf)
     writer.writerows(rows)
-    content = buf.getvalue().encode("utf-8-sig")
-    content_b64 = base64.b64encode(content).decode()
+    content_bytes = buf.getvalue().encode("utf-8-sig")
 
     message = "Update result.csv via Streamlit"
 
-    if current_sha:
-        # ファイルが存在する場合は更新
-        repo.update_file(CSV_PATH, message, content, current_sha)
-    else:
-        # ファイルが存在しない場合は新規作成
-        repo.create_file(CSV_PATH, message, content)
+    try:
+        existing = repo.get_contents(CSV_PATH)
+        current_sha = existing.sha
+        repo.update_file(CSV_PATH, message, content_bytes, current_sha)
+    except Exception:
+        repo.create_file(CSV_PATH, message, content_bytes)
 
 
 # -----------------------------------------------
@@ -89,7 +91,6 @@ with tab_view:
     else:
         st.success(f"データ読み込み完了：{len(df)} 件")
 
-        # --- フィルター ---
         col1, col2, col3 = st.columns([2, 2, 2])
         with col1:
             schools = ["すべて"] + sorted(df["学校"].dropna().unique().tolist())
@@ -100,14 +101,12 @@ with tab_view:
             sort_col = st.selectbox("並び替え", ["全件数", "R-18率", "R-18", "全年齢", "名前"])
             sort_asc = st.checkbox("昇順", value=False)
 
-        # フィルター適用
         filtered = df.copy()
         if selected_school != "すべて":
             filtered = filtered[filtered["学校"] == selected_school]
         filtered = filtered[filtered["全件数"].fillna(0) >= min_total]
         filtered = filtered.sort_values(sort_col, ascending=sort_asc)
 
-        # R-18率を % 表示に変換（表示用）
         display_df = filtered.copy()
         if "R-18率" in display_df.columns:
             display_df["R-18率"] = display_df["R-18率"].apply(
@@ -116,7 +115,6 @@ with tab_view:
 
         st.dataframe(display_df, use_container_width=True, height=500)
 
-        # --- 統計サマリー ---
         st.divider()
         st.subheader("📈 統計サマリー")
         valid = filtered[filtered["全件数"].notna() & (filtered["全件数"] > 0)]
@@ -129,7 +127,6 @@ with tab_view:
             overall_r18 = valid["R-18"].sum() / valid["全件数"].sum()
             col_d.metric("全体R-18率", f"{overall_r18*100:.1f}%")
 
-        # --- ダウンロード ---
         st.divider()
         csv_bytes = filtered.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
         st.download_button(
@@ -150,7 +147,6 @@ with tab_update:
         "⚠️ キャラ数が多いため完了まで **5〜10分程度** かかります。"
     )
 
-    # セッション状態の初期化
     if "running" not in st.session_state:
         st.session_state.running = False
 
@@ -174,9 +170,8 @@ with tab_update:
             )
 
             status_text.text("GitHubにCSVをアップロード中...")
-            push_csv_to_github(rows, current_sha)
+            push_csv_to_github(rows)
 
-            # キャッシュをクリアして再読み込み
             st.cache_data.clear()
 
             progress_bar.progress(1.0)
