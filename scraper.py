@@ -119,7 +119,7 @@ def get_total_from_daihyakka(driver, tag: str) -> int:
     try:
         url = f"https://dic.pixiv.net/a/{quote(tag)}"
         driver.get(url)
-        time.sleep(3)
+        time.sleep(0.1)
         html = driver.page_source
         m = re.findall(r'"pixivWorkCount":(\d+)', html)
         return int(m[0]) if m else 0
@@ -171,11 +171,11 @@ def run_scraping(progress_callback=None, status_callback=None):
 
             # 大百科からR-18含む全件数（Selenium）
             total = get_total_from_daihyakka(driver, name)
-            time.sleep(1)
+            time.sleep(0.1)
 
             # pixiv本体から全年齢件数（requests）
             kenzen = get_kenzen_from_pixiv(name)
-            time.sleep(1)
+            time.sleep(0.1)
 
             r18   = total - kenzen
             ratio = round(1 - (kenzen / total), 4) if total > 0 else 0.0
