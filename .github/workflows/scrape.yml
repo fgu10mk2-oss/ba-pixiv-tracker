@@ -1,0 +1,38 @@
+name: スクレイピング実行
+
+on:
+  workflow_dispatch:  # 手動実行ボタン
+  schedule:
+    - cron: '0 18 * * 0'  # 毎週日曜日 午前3時（JST）に自動実行
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # リポジトリへのpush権限
+
+    steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
+      - name: Python セットアップ
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: ライブラリインストール
+        run: pip install requests beautifulsoup4 selenium webdriver-manager
+
+      - name: Chrome インストール
+        uses: browser-actions/setup-chrome@v1
+
+      - name: スクレイピング実行
+        run: python run_scrape.py
+
+      - name: CSVをコミット・プッシュ
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/result.csv
+          git diff --cached --quiet || git commit -m "Update result.csv [$(date '+%Y-%m-%d %H:%M')]"
+          git push
