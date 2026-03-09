@@ -7,36 +7,19 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      - name: リポジトリをチェックアウト
+        uses: actions/checkout@v4
+
       - name: Python セットアップ
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
       - name: ライブラリインストール
-        run: pip install selenium webdriver-manager requests beautifulsoup4
+        run: pip install selenium webdriver-manager
 
       - name: Chrome インストール
         uses: browser-actions/setup-chrome@v1
 
       - name: Selenium で大百科テスト
-        run: |
-          python3 << 'EOF'
-          import re
-          import time
-          from urllib.parse import quote
-          from selenium import webdriver
-          from selenium.webdriver.chrome.options import Options
-          from selenium.webdriver.chrome.service import Service
-          from webdriver_manager.chrome import ChromeDriverManager
-
-          tag = "小鳥遊ホシノ"
-
-          options = Options()
-          options.add_argument("--headless")
-          options.add_argument("--no-sandbox")
-          options.add_argument("--disable-dev-shm-usage")
-          options.add_argument("--disable-blink-features=AutomationControlled")
-          options.add_experimental_option("excludeSwitches", ["enable-automation"])
-          options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-
-          driver = web
+        run: python test_selenium.py
