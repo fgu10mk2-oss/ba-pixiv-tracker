@@ -7,8 +7,17 @@ import requests
 import re
 import time
 import random
+from datetime import datetime, timedelta
 from urllib.parse import quote
 from bs4 import BeautifulSoup
+
+PAGE_LIMIT    = 10
+EXCLUDE_WORDS = ["生誕祭", "×", "(ブルーアーカイブ)", "ブルアカ"]
+UPDATE_LIMIT  = 10   # 1回の実行で更新するキャラ数
+STALE_HOURS   = 24   # 何時間経過したら更新対象とみなすか
+
+# 先生の別衣装は例外処理（固定リスト）
+SENSEI_COSTUMES = ["アニメ先生(ブルーアーカイブ)", "便利屋先生", "開発部先生"]
 
 
 class BlockedError(Exception):
@@ -19,6 +28,10 @@ class BlockedError(Exception):
         self.completed = completed
         self.total     = total
 
+
+# ===================================================
+# Wikipedia キャラ名簿取得
+# ===================================================
 
 def get_character_list():
     """Wikipediaからキャラクター一覧を取得"""
@@ -48,12 +61,9 @@ def get_character_list():
     def has_english_bracket(raw):
         return bool(re.search(r'（[^）]*[A-Za-z0-9][^）]*）', raw))
 
-    def has_asterisk(name):
-        return '*' in name
-
     def is_fullname(raw_name, had_furigana, had_english_bracket):
         has_kanji = bool(re.search(r'[\u4e00-\u9fff々]', raw_name))
-        if had_english_bracket or has_asterisk(raw_name) or not has_kanji or not had_furigana:
+        if had_english_bracket or '*' in raw_name or not has_kanji or not had_furigana:
             return False
         return True
 
@@ -79,19 +89,157 @@ def get_character_list():
             raw_name            = clean_name(text)
             if not raw_name:
                 continue
-            if raw_name in FORCE_DUAL or not is_fullname(raw_name, had_furigana, had_english_bracket):
-                tags = [raw_name, f"{raw_name}(ブルーアーカイブ)"]
-            else:
-                tags = [raw_name]
-            for tag_name in tags:
-                characters.append({
-                    "name":   tag_name,
-                    "school": current_h2,
-                    "club":   current_h3,
-                })
+            fullname = is_fullname(raw_name, had_furigana, had_english_bracket)
+            characters.append({
+                "name":    raw_name,
+                "school":  current_h2,
+                "club":    current_h3,
+                "is_full": fullname,
+            })
 
     return characters
 
+
+# ===================================================
+# 別衣装タグ取得（requests）
+# ===================================================
+
+def is_costume_tag(char: str, tag: str) -> bool:
+    if not tag.startswith(f"{char}("):
+        return False
+    for word in EXCLUDE_WORDS:
+        if word in tag:
+            return False
+    return True
+
+
+def is_ba_page(tag: str) -> bool:
+    """articleタグの本文テキストにブルーアーカイブの言及があるか"""
+    try:
+        url = f"https://dic.pixiv.net/a/{quote(tag)}"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        if r.status_code == 404:
+            return False
+        soup = BeautifulSoup(r.text, "html.parser")
+        article = soup.select_one("article")
+        if not article:
+            return False
+        return "ブルーアーカイブ" in article.get_text()
+    except Exception as e:
+        print(f"[ERROR] is_ba_page {tag}: {e}", flush=True)
+        return False
+
+
+def _get_search_count(soup) -> int:
+    info = soup.select_one("#search-title .info")
+    if info:
+        m = re.search(r'([\d,]+)件', info.text)
+        if m:
+            return int(m.group(1).replace(",", ""))
+    return 0
+
+
+def _fetch_articles(query: str, max_pages: int) -> dict:
+    articles = {}
+    for page in range(1, max_pages + 1):
+        url = f"https://dic.pixiv.net/search?query={quote(query)}&page={page}"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        soup = BeautifulSoup(r.text, "html.parser")
+        found = 0
+        for article in soup.select("article"):
+            h2 = article.select_one("h2 a")
+            work_li = next((li for li in article.select("ul.data li") if "作品数" in li.text), None)
+            if h2 and work_li:
+                title = h2.text.strip()
+                count = int(work_li.text.replace("作品数:", "").replace(",", "").strip())
+                articles[title] = count
+                found += 1
+        if found == 0:
+            break
+        time.sleep(1.0)
+    return articles
+
+
+def get_costume_tags(char: str, is_full: bool) -> list:
+    """
+    キャラクターの別衣装タグ一覧を返す
+    先生は例外処理（固定リスト）
+    - フルネームあり → キャラ名そのままで検索
+    - フルネームなし → キャラ名(ブルーアーカイブ)で検索
+    """
+    # 先生は固定リスト
+    if char == "先生":
+        return SENSEI_COSTUMES
+
+    query = char if is_full else f"{char}(ブルーアーカイブ)"
+
+    r1 = requests.get(
+        f"https://dic.pixiv.net/search?query={quote(query)}&page=1",
+        headers={"User-Agent": "Mozilla/5.0"}, timeout=10
+    )
+    total = _get_search_count(BeautifulSoup(r1.text, "html.parser"))
+    time.sleep(1.0)
+
+    pages        = min(PAGE_LIMIT, max(1, -(-total // 12))) if total > 0 else 1
+    all_articles = _fetch_articles(query, pages)
+    matched      = {t: c for t, c in all_articles.items() if char in t}
+
+    costumes = []
+    for tag in matched:
+        if not is_costume_tag(char, tag):
+            continue
+        if is_ba_page(tag):
+            costumes.append(tag)
+        time.sleep(1.0)
+
+    return costumes
+
+
+# ===================================================
+# 更新対象キャラ選定
+# ===================================================
+
+def select_targets(characters: list, existing: dict) -> list:
+    """
+    Wikiのキャラ一覧を先頭から走査し、
+    最終更新が24時間以上経過（またはCSV未収録・日時なし）のキャラを
+    上から最大UPDATE_LIMIT件選んで返す
+    """
+    threshold = datetime.now() - timedelta(hours=STALE_HOURS)
+    targets   = []
+
+    for chara in characters:
+        if len(targets) >= UPDATE_LIMIT:
+            break
+
+        name = chara["name"]
+        row  = existing.get(name)
+
+        if row is None:
+            # CSV未収録 → 対象
+            targets.append(chara)
+            continue
+
+        updated_str = row.get("最終更新日時", "")
+        if not updated_str:
+            # 日時なし → 対象
+            targets.append(chara)
+            continue
+
+        try:
+            updated = datetime.strptime(updated_str, "%Y-%m-%d %H:%M:%S")
+            if updated < threshold:
+                targets.append(chara)
+        except ValueError:
+            # パース失敗 → 対象
+            targets.append(chara)
+
+    return targets
+
+
+# ===================================================
+# Selenium（大百科）
+# ===================================================
 
 def create_driver():
     """Seleniumドライバーを新規作成"""
@@ -148,6 +296,10 @@ def fetch_one(tag: str, retry: bool = False) -> int:
         driver.quit()
 
 
+# ===================================================
+# pixiv 全年齢件数取得（requests）
+# ===================================================
+
 def get_kenzen_from_pixiv(tag: str) -> int:
     """requestsでpixiv本体から全年齢件数を取得"""
     try:
@@ -165,42 +317,78 @@ def get_kenzen_from_pixiv(tag: str) -> int:
         return 0
 
 
-def run_scraping(progress_callback=None, status_callback=None, row_callback=None, characters_callback=None):
+# ===================================================
+# メイン処理
+# ===================================================
+
+def run_scraping(
+    existing=None,
+    progress_callback=None,
+    status_callback=None,
+    row_callback=None,
+    characters_callback=None
+):
     """
     スクレイピングのメイン処理
+    existing: {名前: {列名: 値}} の既存CSVデータ（Noneなら空扱い）
     リトライしてもブロックされた場合はBlockedErrorを送出
     正常完了時は (rows, completed, total) を返す
-    row_callback:        1件処理完了のたびに (chara, row) を渡すコールバック
-    characters_callback: キャラ名簿取得後に characters リストを渡すコールバック
     """
+    if existing is None:
+        existing = {}
+
     if status_callback:
         status_callback("Wikipediaからキャラクター名簿を取得中...")
 
-    characters  = get_character_list()
-    total_count = len(characters)
+    characters = get_character_list()
 
-    # キャラ名簿を外部に通知
     if characters_callback:
         characters_callback(characters)
 
-    if status_callback:
-        status_callback(f"キャラクター {total_count} 件取得完了。処理開始（1件ごとドライバーリセット方式）...")
+    # 更新対象キャラを選定（最大UPDATE_LIMIT件）
+    targets = select_targets(characters, existing)
 
-    output_rows = [["学校", "部活", "名前", "全件数", "R-18", "全年齢", "R-18率"]]
+    if status_callback:
+        status_callback(
+            f"キャラクター {len(characters)} 件取得完了。"
+            f"更新対象: {len(targets)} 件。別衣装タグを調査中..."
+        )
+
+    # 各キャラのメイン＋別衣装タグを展開
+    entries = []
+    for chara in targets:
+        name    = chara["name"]
+        school  = chara["school"]
+        club    = chara["club"]
+        is_full = chara["is_full"]
+
+        main_tag = name if is_full else f"{name}(ブルーアーカイブ)"
+        entries.append({"name": name, "tag": main_tag, "school": school, "club": club})
+
+        costumes = get_costume_tags(name, is_full)
+        for ctag in costumes:
+            entries.append({"name": name, "tag": ctag, "school": school, "club": club})
+
+    total_count = len(entries)
+
+    if status_callback:
+        status_callback(f"処理対象タグ {total_count} 件（メイン＋別衣装）。取得開始...")
+
+    output_rows = [["名前", "タグ名", "学校", "部活", "全件数", "全年齢", "R-18", "R-18率", "最終更新日時"]]
     completed   = 0
 
-    for i, chara in enumerate(characters):
-        name   = chara["name"]
-        school = chara["school"]
-        club   = chara["club"]
+    for i, entry in enumerate(entries):
+        name   = entry["name"]
+        tag    = entry["tag"]
+        school = entry["school"]
+        club   = entry["club"]
 
-        # 1件ごとにドライバーを起動・取得・終了
-        total = fetch_one(name)
+        # 大百科から全件数取得（Selenium・1件ごとリセット）
+        total = fetch_one(tag)
 
-        # リトライしてもブロックされた場合は中断
         if total == -1:
             msg = (
-                f"[BLOCKED] {i+1}件目 ({name}) でリトライ後もブロックされました。"
+                f"[BLOCKED] {i+1}件目 ({tag}) でリトライ後もブロックされました。"
                 f"{completed}件処理済みで中断します。"
             )
             print(msg, flush=True)
@@ -210,16 +398,18 @@ def run_scraping(progress_callback=None, status_callback=None, row_callback=None
 
         time.sleep(random.uniform(1.0, 2.0))
 
-        kenzen = get_kenzen_from_pixiv(name)
+        kenzen  = get_kenzen_from_pixiv(tag)
         time.sleep(random.uniform(1.0, 2.0))
 
-        r18   = total - kenzen
-        ratio = round(1 - (kenzen / total), 4) if total > 0 else 0.0
+        r18     = total - kenzen
+        ratio   = round(1 - (kenzen / total), 4) if total > 0 else 0.0
+        updated = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        row = [school, club, name, total, r18, kenzen, ratio]
+        row = [name, tag, school, club, total, kenzen, r18, ratio, updated]
         output_rows.append(row)
+
         if row_callback:
-            row_callback(chara, row)
+            row_callback(entry, row)
         completed += 1
 
         if progress_callback:
@@ -227,7 +417,7 @@ def run_scraping(progress_callback=None, status_callback=None, row_callback=None
 
         if status_callback:
             status_callback(
-                f"[{i+1}/{total_count}] {name} | "
+                f"[{i+1}/{total_count}] {tag} | "
                 f"全:{total} 全年齢:{kenzen} "
                 f"R-18:{r18} R-18率:{ratio*100:.1f}%"
             )

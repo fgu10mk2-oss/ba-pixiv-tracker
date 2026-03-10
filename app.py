@@ -93,10 +93,10 @@ with st.sidebar:
     if wf:
         key = (wf["status"], wf["conclusion"])
         status_label = {
-            ("in_progress", None):      "🟡 実行中...",
-            ("queued",      None):      "🟡 待機中...",
-            ("completed",   "success"): "✅ 完了",
-            ("completed",   "failure"): "❌ 失敗",
+            ("in_progress", None):        "🟡 実行中...",
+            ("queued",      None):        "🟡 待機中...",
+            ("completed",   "success"):   "✅ 完了",
+            ("completed",   "failure"):   "❌ 失敗",
             ("completed",   "cancelled"): "⚪ キャンセル",
         }.get(key, "⚪ 不明")
 
@@ -112,7 +112,7 @@ with st.sidebar:
         if trigger_github_actions():
             st.success(
                 "GitHub Actionsを起動しました！\n\n"
-                "完了まで15〜20分かかります。\n"
+                "10キャラ分を処理します。\n"
                 "完了後に「🔃 データを再読み込み」を押してください。"
             )
         else:
@@ -140,6 +140,7 @@ if df is None:
 else:
     st.success(f"データ読み込み完了：{len(df)} 件")
 
+    # フィルタ・ソート
     col1, col2, col3 = st.columns([2, 2, 2])
     with col1:
         schools = ["すべて"] + sorted(df["学校"].dropna().unique().tolist())
@@ -150,10 +151,19 @@ else:
         sort_col = st.selectbox("並び替え", ["全件数", "R-18率", "R-18", "全年齢", "名前"])
         sort_asc = st.checkbox("昇順", value=False)
 
+    # 別衣装を含む／メインキャラのみ
+    show_costumes = st.checkbox("別衣装も表示する", value=True)
+
     filtered = df.copy()
     if selected_school != "すべて":
         filtered = filtered[filtered["学校"] == selected_school]
     filtered = filtered[filtered["全件数"].fillna(0) >= min_total]
+    if not show_costumes:
+        # タグ名 == 名前 or タグ名 == 名前(ブルーアーカイブ) のみ表示
+        filtered = filtered[
+            (filtered["タグ名"] == filtered["名前"]) |
+            (filtered["タグ名"] == filtered["名前"] + "(ブルーアーカイブ)")
+        ]
     filtered = filtered.sort_values(sort_col, ascending=sort_asc)
 
     display_df = filtered.copy()
