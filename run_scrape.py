@@ -15,23 +15,33 @@ def main():
 
     os.makedirs(output_dir, exist_ok=True)
 
+    rows      = [["学校", "部活", "名前", "全件数", "R-18", "全年齢", "R-18率"]]
+    completed = 0
+    total     = 0
+    error_msg = None
+
     def on_status(msg):
         print(msg, flush=True)
 
     def on_progress(val):
         print(f"進捗: {val*100:.1f}%", flush=True)
 
-    print("スクレイピング開始...", flush=True)
+    # rowsをrun_scrapingの外から参照できるようにするため
+    # run_scrapingが途中でどんな例外を投げても保存できるよう
+    # scraper側のrowsをここで受け取れるようにする
+    scraper_state = {"rows": rows}
 
-    rows      = None
-    completed = 0
-    total     = 0
-    blocked   = False
+    def on_row(row):
+        """1件処理完了のたびに呼ばれるコールバック"""
+        scraper_state["rows"].append(row)
+
+    print("スクレイピング開始...", flush=True)
 
     try:
         rows, completed, total = run_scraping(
             progress_callback=on_progress,
             status_callback=on_status,
+            row_callback=on_row,
         )
         print(f"\n✅ 全件完了: {completed}/{total} 件", flush=True)
 
@@ -39,11 +49,18 @@ def main():
         rows      = e.rows
         completed = e.completed
         total     = e.total
-        blocked   = True
-        print(f"\n⚠️ ブロックにより中断: {completed}/{total} 件処理済み", flush=True)
+        error_msg = f"ブロックにより中断: {completed}/{total} 件処理済み"
+        print(f"\n⚠️ {error_msg}", flush=True)
 
-    # 結果をCSVに保存（中断分でも保存する）
-    if rows and len(rows) > 1:
+    except Exception as e:
+        # タイムアウトなどの予期しないエラー
+        rows      = scraper_state["rows"]
+        completed = len(rows) - 1  # ヘッダー行を除く
+        error_msg = f"予期しないエラーで中断: {completed} 件処理済み / {e}"
+        print(f"\n❌ {error_msg}", flush=True)
+
+    # どんな場合でもCSVを保存
+    if len(rows) > 1:
         with open(output_file, mode="w", newline="", encoding="utf-8-sig") as f:
             writer = csv.writer(f)
             writer.writerows(rows)
@@ -51,8 +68,7 @@ def main():
     else:
         print("⚠️ 保存できるデータがありませんでした。", flush=True)
 
-    # ブロックされた場合はexit code 1（Actionsログに赤く表示）
-    if blocked:
+    if error_msg:
         sys.exit(1)
 
 
