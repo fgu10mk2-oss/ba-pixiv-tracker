@@ -1,6 +1,6 @@
 # ===================================================
 # ブルーアーカイブ キャラクターpixiv R-18率調査ツール
-# scraper.py - スクレイピング処理（Selenium版）
+# scraper.py - スクレイピング処理（Selenium版・1件ごとリセット）
 # ===================================================
 
 import requests
@@ -12,12 +12,12 @@ from bs4 import BeautifulSoup
 
 
 class BlockedError(Exception):
-    """大百科にブロックされた時に送出する例外"""
+    """リトライしてもブロックされた時に送出する例外"""
     def __init__(self, message, rows, completed, total):
         super().__init__(message)
-        self.rows      = rows       # それまでの処理済み行データ
-        self.completed = completed  # 処理済み件数
-        self.total     = total      # 全件数
+        self.rows      = rows
+        self.completed = completed
+        self.total     = total
 
 
 def get_character_list():
@@ -117,26 +117,35 @@ def create_driver():
     return driver
 
 
-def get_total_from_daihyakka(driver, tag: str):
+def fetch_one(tag: str, retry: bool = False) -> int:
     """
-    Seleniumで大百科からR-18含む全件数を取得
-    戻り値: int（件数） or "BLOCKED"（ブロック検知）
+    1件だけドライバーを起動して大百科から取得し終了する
+    ブロックされた場合: retry=Falseなら15秒待ってリトライ
+                        retry=Trueなら -1 を返す（完全失敗）
     """
+    driver = create_driver()
     try:
         url = f"https://dic.pixiv.net/a/{quote(tag)}"
         driver.get(url)
-        time.sleep(random.uniform(3.0, 5.0))
-        html = driver.page_source
+        time.sleep(random.uniform(5.0, 7.0))
+        html  = driver.page_source
+        title = driver.title
 
-        if "Just a moment" in html or "Just a moment" in driver.title:
-            return "BLOCKED"
+        if "Just a moment" in html or "Just a moment" in title:
+            if not retry:
+                print(f"[BLOCK→RETRY] {tag}: ブロック検知、15秒待ってリトライします", flush=True)
+                driver.quit()
+                time.sleep(15)
+                return fetch_one(tag, retry=True)
+            else:
+                print(f"[BLOCK→FAIL] {tag}: リトライもブロックされました", flush=True)
+                return -1
 
         m = re.findall(r'"pixivWorkCount":(\d+)', html)
         return int(m[0]) if m else 0
 
-    except Exception as e:
-        print(f"[ERROR] 大百科 {tag}: {e}", flush=True)
-        return 0
+    finally:
+        driver.quit()
 
 
 def get_kenzen_from_pixiv(tag: str) -> int:
@@ -159,7 +168,7 @@ def get_kenzen_from_pixiv(tag: str) -> int:
 def run_scraping(progress_callback=None, status_callback=None):
     """
     スクレイピングのメイン処理
-    ブロック検知時はBlockedError(rows, completed, total)を送出
+    リトライしてもブロックされた場合はBlockedErrorを送出
     正常完了時は (rows, completed, total) を返す
     """
     if status_callback:
@@ -169,53 +178,49 @@ def run_scraping(progress_callback=None, status_callback=None):
     total_count = len(characters)
 
     if status_callback:
-        status_callback(f"キャラクター {total_count} 件取得完了。処理開始...")
+        status_callback(f"キャラクター {total_count} 件取得完了。処理開始（1件ごとドライバーリセット方式）...")
 
     output_rows = [["学校", "部活", "名前", "全件数", "R-18", "全年齢", "R-18率"]]
-    driver      = create_driver()
     completed   = 0
 
-    try:
-        for i, chara in enumerate(characters):
-            name   = chara["name"]
-            school = chara["school"]
-            club   = chara["club"]
+    for i, chara in enumerate(characters):
+        name   = chara["name"]
+        school = chara["school"]
+        club   = chara["club"]
 
-            total = get_total_from_daihyakka(driver, name)
+        # 1件ごとにドライバーを起動・取得・終了
+        total = fetch_one(name)
 
-            # ブロック検知 → 即中断
-            if total == "BLOCKED":
-                msg = (
-                    f"[BLOCKED] {i+1}件目 ({name}) でブロックされました。"
-                    f"{completed}件処理済みで中断します。"
-                )
-                print(msg, flush=True)
-                if status_callback:
-                    status_callback(msg)
-                raise BlockedError(msg, output_rows, completed, total_count)
-
-            time.sleep(random.uniform(1.0, 2.0))
-
-            kenzen = get_kenzen_from_pixiv(name)
-            time.sleep(random.uniform(1.0, 2.0))
-
-            r18   = total - kenzen
-            ratio = round(1 - (kenzen / total), 4) if total > 0 else 0.0
-
-            output_rows.append([school, club, name, total, r18, kenzen, ratio])
-            completed += 1
-
-            if progress_callback:
-                progress_callback((i + 1) / total_count)
-
+        # リトライしてもブロックされた場合は中断
+        if total == -1:
+            msg = (
+                f"[BLOCKED] {i+1}件目 ({name}) でリトライ後もブロックされました。"
+                f"{completed}件処理済みで中断します。"
+            )
+            print(msg, flush=True)
             if status_callback:
-                status_callback(
-                    f"[{i+1}/{total_count}] {name} | "
-                    f"全:{total} 全年齢:{kenzen} "
-                    f"R-18:{r18} R-18率:{ratio*100:.1f}%"
-                )
+                status_callback(msg)
+            raise BlockedError(msg, output_rows, completed, total_count)
 
-    finally:
-        driver.quit()
+        time.sleep(random.uniform(1.0, 2.0))
+
+        kenzen = get_kenzen_from_pixiv(name)
+        time.sleep(random.uniform(1.0, 2.0))
+
+        r18   = total - kenzen
+        ratio = round(1 - (kenzen / total), 4) if total > 0 else 0.0
+
+        output_rows.append([school, club, name, total, r18, kenzen, ratio])
+        completed += 1
+
+        if progress_callback:
+            progress_callback((i + 1) / total_count)
+
+        if status_callback:
+            status_callback(
+                f"[{i+1}/{total_count}] {name} | "
+                f"全:{total} 全年齢:{kenzen} "
+                f"R-18:{r18} R-18率:{ratio*100:.1f}%"
+            )
 
     return output_rows, completed, total_count
