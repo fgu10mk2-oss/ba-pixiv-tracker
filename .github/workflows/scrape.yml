@@ -27,7 +27,9 @@ jobs:
         uses: browser-actions/setup-chrome@v1
 
       - name: スクレイピング実行
+        id: scrape
         run: python run_scrape.py
+        continue-on-error: true  # ブロックで失敗しても次のステップに進む
 
       - name: CSVをコミット・プッシュ
         run: |
@@ -35,5 +37,12 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git pull --rebase origin main
           git add data/result.csv
-          git diff --cached --quiet || git commit -m "Update result.csv [$(date '+%Y-%m-%d %H:%M')]"
+          git diff --cached --quiet || git commit -m "Update result.csv [$(date '+%Y-%m-%d %H:%M')] (scrape: ${{ steps.scrape.outcome }})"
           git push
+
+      - name: スクレイピング結果を確認
+        run: |
+          if [ "${{ steps.scrape.outcome }}" = "failure" ]; then
+            echo "⚠️ スクレイピングがブロックにより中断されましたが、処理済みCSVは保存しました。"
+            exit 1
+          fi
