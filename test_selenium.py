@@ -22,22 +22,30 @@ def create_driver():
         options=options
     )
 
+tags = ["先生", "先生(ブルーアーカイブ)", "小鳥遊ホシノ", "ホシノ(ブルーアーカイブ)"]
 driver = create_driver()
-tags = ["先生", "先生(ブルーアーカイブ)", "小鳥遊ホシノ"]
 
 try:
-    for tag in tags:
+    for i, tag in enumerate(tags):
         url = f"https://dic.pixiv.net/a/{quote(tag)}"
-        print(f"\nアクセス中: {url}")
+        print(f"\n[{i+1}] アクセス中: {url}")
         driver.get(url)
-        time.sleep(5)
+        time.sleep(6)
         html  = driver.page_source
         title = driver.title
-        print(f"タイトル: {title}")
         blocked = "Just a moment" in html or "Just a moment" in title
+        print(f"タイトル: {title}")
         print(f"ブロック: {blocked}")
         m = re.findall(r'"pixivWorkCount":(\d+)', html)
         print(f"pixivWorkCount: {m}")
-        time.sleep(3)
+
+        # ブロックされたらドライバーを作り直して15秒待機
+        if blocked:
+            print("→ ドライバーをリセットして15秒待機...")
+            driver.quit()
+            time.sleep(15)
+            driver = create_driver()
+        else:
+            time.sleep(4)
 finally:
     driver.quit()
