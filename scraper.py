@@ -160,18 +160,53 @@ def _fetch_articles(query: str, max_pages: int) -> dict:
     return articles
 
 
+def resolve_main_tag(char: str, is_full: bool) -> str:
+    """
+    メインタグを決定する
+    - フルネームあり → キャラ名そのまま
+    - フルネームなし → 「キャラ名(ブルーアーカイブ)」が大百科に存在すればそれ、なければキャラ名そのまま
+    """
+    if is_full:
+        return char
+
+    ba_tag = f"{char}(ブルーアーカイブ)"
+    try:
+        url = f"https://dic.pixiv.net/a/{quote(ba_tag)}"
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        if r.status_code == 200:
+            # ページが存在してもpixivWorkCountが0の場合はそのまま使わない
+            m = re.findall(r'"pixivWorkCount":(\d+)', r.text)
+            if m and int(m[0]) > 0:
+                return ba_tag
+    except Exception as e:
+        print(f"[ERROR] resolve_main_tag {ba_tag}: {e}", flush=True)
+
+    return char
+
+
 def get_costume_tags(char: str, is_full: bool) -> list:
     """
     キャラクターの別衣装タグ一覧を返す
     先生は例外処理（固定リスト）
     - フルネームあり → キャラ名そのままで検索
-    - フルネームなし → キャラ名(ブルーアーカイブ)で検索
+    - フルネームなし → キャラ名(ブルーアーカイブ)で検索、0件ならキャラ名で再検索
     """
     # 先生は固定リスト
     if char == "先生":
         return SENSEI_COSTUMES
 
-    query = char if is_full else f"{char}(ブルーアーカイブ)"
+    if is_full:
+        query = char
+    else:
+        ba_query = f"{char}(ブルーアーカイブ)"
+        r_ba = requests.get(
+            f"https://dic.pixiv.net/search?query={quote(ba_query)}&page=1",
+            headers={"User-Agent": "Mozilla/5.0"}, timeout=10
+        )
+        total_ba = _get_search_count(BeautifulSoup(r_ba.text, "html.parser"))
+        time.sleep(1.0)
+        # (BA)付きで検索結果があればそのクエリ、なければそのまま
+        query = ba_query if total_ba > 0 else char
 
     r1 = requests.get(
         f"https://dic.pixiv.net/search?query={quote(query)}&page=1",
@@ -362,7 +397,7 @@ def run_scraping(
         club    = chara["club"]
         is_full = chara["is_full"]
 
-        main_tag = name if is_full else f"{name}(ブルーアーカイブ)"
+        main_tag = resolve_main_tag(name, is_full)
         entries.append({"name": name, "tag": main_tag, "school": school, "club": club})
 
         costumes = get_costume_tags(name, is_full)
