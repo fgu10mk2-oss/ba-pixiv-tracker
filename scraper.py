@@ -165,18 +165,23 @@ def get_kenzen_from_pixiv(tag: str) -> int:
         return 0
 
 
-def run_scraping(progress_callback=None, status_callback=None, row_callback=None):
+def run_scraping(progress_callback=None, status_callback=None, row_callback=None, characters_callback=None):
     """
     スクレイピングのメイン処理
     リトライしてもブロックされた場合はBlockedErrorを送出
     正常完了時は (rows, completed, total) を返す
-    row_callback: 1件処理完了のたびにrowを渡すコールバック（外部から随時保存用）
+    row_callback:        1件処理完了のたびに (chara, row) を渡すコールバック
+    characters_callback: キャラ名簿取得後に characters リストを渡すコールバック
     """
     if status_callback:
         status_callback("Wikipediaからキャラクター名簿を取得中...")
 
     characters  = get_character_list()
     total_count = len(characters)
+
+    # キャラ名簿を外部に通知
+    if characters_callback:
+        characters_callback(characters)
 
     if status_callback:
         status_callback(f"キャラクター {total_count} 件取得完了。処理開始（1件ごとドライバーリセット方式）...")
@@ -214,7 +219,7 @@ def run_scraping(progress_callback=None, status_callback=None, row_callback=None
         row = [school, club, name, total, r18, kenzen, ratio]
         output_rows.append(row)
         if row_callback:
-            row_callback(row)
+            row_callback(chara, row)
         completed += 1
 
         if progress_callback:
