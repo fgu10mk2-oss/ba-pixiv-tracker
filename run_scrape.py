@@ -79,6 +79,7 @@ def merge_results(character_names, new_data_by_tag, existing_by_tag):
 
     # Wiki名簿順に並び替えて出力
     # 各キャラのメインタグ→別衣装タグの順になるよう整理
+    # ※別衣装はcharacter_namesに含まれないのでmergedから名前単位でグループ化
     name_to_tags = {}
     for tag, row in merged.items():
         name = row.get("名前", "")
@@ -86,15 +87,20 @@ def merge_results(character_names, new_data_by_tag, existing_by_tag):
             name_to_tags[name] = []
         name_to_tags[name].append(tag)
 
+    # Wiki名簿の順番でキャラを処理（重複排除）
+    seen_names = set()
     for chara in character_names:
         name = chara["name"]
+        if name in seen_names:
+            continue
+        seen_names.add(name)
         if name not in name_to_tags:
             continue
         tags = name_to_tags[name]
-        # メインタグ（名前==タグ名 or (名前+BA)）を先頭に
+        # メインタグ（名前==タグ名 or 名前+(BA)）を先頭に、残りはソート
         main_candidates = [t for t in tags if t == name or t == f"{name}(ブルーアーカイブ)"]
-        other_tags      = [t for t in tags if t not in main_candidates]
-        for tag in main_candidates + sorted(other_tags):
+        other_tags      = sorted([t for t in tags if t not in main_candidates])
+        for tag in main_candidates + other_tags:
             row = merged[tag]
             rows.append([row.get(col, "") for col in header])
 
