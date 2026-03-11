@@ -154,16 +154,20 @@ def selenium_get(url: str, retry: bool = False) -> str:
 
 
 def is_ba_page(tag: str) -> bool:
-    """articleタグの本文テキストにブルーアーカイブの言及があるか（Selenium版）"""
-    url  = f"https://dic.pixiv.net/a/{quote(tag)}"
-    html = selenium_get(url)
-    if not html:
+    """articleタグの本文テキストにブルーアーカイブの言及があるか（requests版）"""
+    try:
+        url  = f"https://dic.pixiv.net/a/{quote(tag)}"
+        r    = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        if r.status_code == 404:
+            return False
+        soup    = BeautifulSoup(r.text, "html.parser")
+        article = soup.select_one("article")
+        if not article:
+            return False
+        return "ブルーアーカイブ" in article.get_text()
+    except Exception as e:
+        print(f"[ERROR] is_ba_page {tag}: {e}", flush=True)
         return False
-    soup    = BeautifulSoup(html, "html.parser")
-    article = soup.select_one("article")
-    if not article:
-        return False
-    return "ブルーアーカイブ" in article.get_text()
 
 
 def _get_search_count(soup) -> int:
@@ -175,18 +179,22 @@ def _get_search_count(soup) -> int:
     return 0
 
 
-def _selenium_fetch_search(query: str, page: int) -> BeautifulSoup:
-    """大百科検索ページをSeleniumで取得してBeautifulSoupを返す"""
-    url  = f"https://dic.pixiv.net/search?query={quote(query)}&page={page}"
-    html = selenium_get(url)
-    return BeautifulSoup(html, "html.parser") if html else BeautifulSoup("", "html.parser")
+def _fetch_search_soup(query: str, page: int) -> BeautifulSoup:
+    """大百科検索ページをrequestsで取得してBeautifulSoupを返す"""
+    try:
+        url = f"https://dic.pixiv.net/search?query={quote(query)}&page={page}"
+        r   = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        return BeautifulSoup(r.text, "html.parser")
+    except Exception as e:
+        print(f"[ERROR] _fetch_search_soup {query} p={page}: {e}", flush=True)
+        return BeautifulSoup("", "html.parser")
 
 
 def _fetch_articles(query: str, max_pages: int) -> dict:
     """検索結果から {タグ名: 作品数} を取得（Selenium版）"""
     articles = {}
     for page in range(1, max_pages + 1):
-        soup  = _selenium_fetch_search(query, page)
+        soup  = _fetch_search_soup(query, page)
         found = 0
         for article in soup.select("article"):
             h2      = article.select_one("h2 a")
@@ -211,7 +219,7 @@ def resolve_main_tag(char: str, is_full: bool) -> str:
         return char
 
     ba_tag = f"{char}(ブルーアーカイブ)"
-    soup   = _selenium_fetch_search(ba_tag, 1)
+    soup   = _fetch_search_soup(ba_tag, 1)
     for article in soup.select("article"):
         h2 = article.select_one("h2 a")
         if h2 and h2.text.strip() == ba_tag:
@@ -237,7 +245,7 @@ def get_costume_tags(char: str, is_full: bool) -> list:
     else:
         ba_query = f"{char}(ブルーアーカイブ)"
         print(f"[COSTUME_SEARCH] {char}: BA付きクエリで検索中...", flush=True)
-        soup_ba  = _selenium_fetch_search(ba_query, 1)
+        soup_ba  = _fetch_search_soup(ba_query, 1)
         total_ba = _get_search_count(soup_ba)
         print(f"[COSTUME_SEARCH] {char}: BA付き検索結果 {total_ba} 件", flush=True)
         query    = ba_query if total_ba > 0 else char
@@ -245,7 +253,7 @@ def get_costume_tags(char: str, is_full: bool) -> list:
     print(f"[COSTUME_SEARCH] {char}: query={query} で検索開始", flush=True)
 
     # 1ページ目で件数確認
-    soup1  = _selenium_fetch_search(query, 1)
+    soup1  = _fetch_search_soup(query, 1)
     total  = _get_search_count(soup1)
     pages  = min(PAGE_LIMIT, max(1, -(-total // 12))) if total > 0 else 1
     print(f"[COSTUME_SEARCH] {char}: 検索結果 {total} 件 / {pages} ページ", flush=True)
@@ -263,7 +271,7 @@ def get_costume_tags(char: str, is_full: bool) -> list:
     if pages > 1:
         for page in range(2, pages + 1):
             try:
-                soup_p = _selenium_fetch_search(query, page)
+                soup_p = _fetch_search_soup(query, page)
                 found  = 0
                 for article in soup_p.select("article"):
                     h2      = article.select_one("h2 a")
