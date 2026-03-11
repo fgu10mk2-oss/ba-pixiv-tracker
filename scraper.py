@@ -113,9 +113,10 @@ def is_costume_tag(char: str, tag: str) -> bool:
     return True
 
 
-def selenium_get(url: str, retry: bool = False) -> str:
+def selenium_get(url: str, wait_css: str = "article", retry: bool = False) -> str:
     """
     Seleniumで指定URLのpage_sourceを取得して返す（1回ごとドライバー起動・終了）
+    wait_css: 待機するCSSセレクタ（デフォルト: article）
     Cloudflareブロック時: retry=Falseなら15秒待ってリトライ
                           retry=Trueなら空文字を返す
     """
@@ -126,14 +127,14 @@ def selenium_get(url: str, retry: bool = False) -> str:
     driver = create_driver()
     try:
         driver.get(url)
-        # articleタグが出現するまで最大30秒待機（Next.jsのクライアントレンダリング対応）
+        # 指定要素が出現するまで最大25秒待機（タイムアウト120秒の余裕を残す）
         try:
-            WebDriverWait(driver, 30).until(
-                EC.presence_of_element_located((By.TAG_NAME, "article"))
+            WebDriverWait(driver, 25).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, wait_css))
             )
         except Exception:
-            # articleが出なくてもCloudflare判定のためsleepして続行
-            time.sleep(random.uniform(5.0, 7.0))
+            # 要素が出なくてもそのまま続行（Cloudflareページ等）
+            pass
 
         html  = driver.page_source
         title = driver.title
@@ -142,7 +143,7 @@ def selenium_get(url: str, retry: bool = False) -> str:
                 print(f"[BLOCK→RETRY] {url}: ブロック検知、15秒待ってリトライします", flush=True)
                 driver.quit()
                 time.sleep(15)
-                return selenium_get(url, retry=True)
+                return selenium_get(url, wait_css=wait_css, retry=True)
             else:
                 print(f"[BLOCK→FAIL] {url}: リトライもブロックされました", flush=True)
                 return ""
@@ -156,7 +157,7 @@ def selenium_get(url: str, retry: bool = False) -> str:
             except Exception:
                 pass
             time.sleep(20)
-            return selenium_get(url, retry=True)
+            return selenium_get(url, wait_css=wait_css, retry=True)
         return ""
     finally:
         try:
@@ -190,7 +191,7 @@ def _get_search_count(soup) -> int:
 def _fetch_search_soup(query: str, page: int) -> BeautifulSoup:
     """大百科検索ページをSeleniumで取得してBeautifulSoupを返す"""
     url  = f"https://dic.pixiv.net/search?query={quote(query)}&page={page}"
-    html = selenium_get(url)
+    html = selenium_get(url, wait_css="#search-title")
     return BeautifulSoup(html, "html.parser") if html else BeautifulSoup("", "html.parser")
 
 
@@ -385,11 +386,11 @@ def fetch_one(tag: str, retry: bool = False) -> int:
         url = f"https://dic.pixiv.net/a/{quote(tag)}"
         driver.get(url)
         try:
-            WebDriverWait(driver, 30).until(
-                EC.presence_of_element_located((By.TAG_NAME, "article"))
+            WebDriverWait(driver, 25).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "article"))
             )
         except Exception:
-            time.sleep(random.uniform(5.0, 7.0))
+            pass
 
         html  = driver.page_source
         title = driver.title
