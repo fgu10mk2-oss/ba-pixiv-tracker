@@ -119,10 +119,22 @@ def selenium_get(url: str, retry: bool = False) -> str:
     Cloudflareブロック時: retry=Falseなら15秒待ってリトライ
                           retry=Trueなら空文字を返す
     """
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.common.by import By
+
     driver = create_driver()
     try:
         driver.get(url)
-        time.sleep(random.uniform(7.0, 10.0))
+        # articleタグが出現するまで最大30秒待機（Next.jsのクライアントレンダリング対応）
+        try:
+            WebDriverWait(driver, 30).until(
+                EC.presence_of_element_located((By.TAG_NAME, "article"))
+            )
+        except Exception:
+            # articleが出なくてもCloudflare判定のためsleepして続行
+            time.sleep(random.uniform(5.0, 7.0))
+
         html  = driver.page_source
         title = driver.title
         if "Just a moment" in html or "Just a moment" in title:
@@ -380,11 +392,21 @@ def fetch_one(tag: str, retry: bool = False) -> int:
     ブロックされた場合: retry=Falseなら15秒待ってリトライ
                         retry=Trueなら -1 を返す（完全失敗）
     """
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.common.by import By
+
     driver = create_driver()
     try:
         url = f"https://dic.pixiv.net/a/{quote(tag)}"
         driver.get(url)
-        time.sleep(random.uniform(7.0, 10.0))
+        try:
+            WebDriverWait(driver, 30).until(
+                EC.presence_of_element_located((By.TAG_NAME, "article"))
+            )
+        except Exception:
+            time.sleep(random.uniform(5.0, 7.0))
+
         html  = driver.page_source
         title = driver.title
 
