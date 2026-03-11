@@ -164,19 +164,20 @@ def resolve_main_tag(char: str, is_full: bool) -> str:
     """
     メインタグを決定する
     - フルネームあり → キャラ名そのまま
-    - フルネームなし → 「キャラ名(ブルーアーカイブ)」が大百科に存在すればそれ、なければキャラ名そのまま
+    - フルネームなし → 大百科検索で「キャラ名(ブルーアーカイブ)」がヒットすればそれ、なければキャラ名そのまま
     """
     if is_full:
         return char
 
     ba_tag = f"{char}(ブルーアーカイブ)"
     try:
-        url = f"https://dic.pixiv.net/a/{quote(ba_tag)}"
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        if r.status_code == 200:
-            # ページが存在してもpixivWorkCountが0の場合はそのまま使わない
-            m = re.findall(r'"pixivWorkCount":(\d+)', r.text)
-            if m and int(m[0]) > 0:
+        url = f"https://dic.pixiv.net/search?query={quote(ba_tag)}&page=1"
+        r   = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+        soup = BeautifulSoup(r.text, "html.parser")
+        # 検索結果にba_tagと完全一致するタイトルがあれば採用
+        for article in soup.select("article"):
+            h2 = article.select_one("h2 a")
+            if h2 and h2.text.strip() == ba_tag:
                 return ba_tag
     except Exception as e:
         print(f"[ERROR] resolve_main_tag {ba_tag}: {e}", flush=True)
