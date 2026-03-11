@@ -166,7 +166,7 @@ def selenium_get(url: str, wait_css: str = "article", retry: bool = False) -> st
             pass
 
 
-def is_ba_page(tag: str) -> bool:
+def is_ba_page(tag: str, retry: bool = False) -> bool:
     """articleタグの本文テキストにブルーアーカイブの言及があるか（Selenium版）"""
     url  = f"https://dic.pixiv.net/a/{quote(tag)}"
     html = selenium_get(url)
@@ -175,8 +175,18 @@ def is_ba_page(tag: str) -> bool:
     soup    = BeautifulSoup(html, "html.parser")
     article = soup.select_one("article")
     if not article:
+        if not retry:
+            print(f"[is_ba_page] {tag}: articleなし、10秒後にリトライ", flush=True)
+            time.sleep(10)
+            return is_ba_page(tag, retry=True)
         return False
-    return "ブルーアーカイブ" in article.get_text()
+    result = "ブルーアーカイブ" in article.get_text()
+    if not result and not retry:
+        # articleはあるがBA言及なし→念のため1回リトライ
+        print(f"[is_ba_page] {tag}: BA言及なし、10秒後にリトライ", flush=True)
+        time.sleep(10)
+        return is_ba_page(tag, retry=True)
+    return result
 
 
 def _get_search_count(soup) -> int:
