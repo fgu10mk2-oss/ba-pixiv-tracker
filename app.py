@@ -111,7 +111,7 @@ with st.sidebar:
 
     st.divider()
 
-    update_limit = st.slider("更新するキャラ数", min_value=1, max_value=20, value=1, step=1)
+    update_limit = st.slider("更新するキャラ数", min_value=1, max_value=50, value=1, step=1)
 
     if st.button("🚀 更新を実行", type="primary", use_container_width=True):
         if trigger_github_actions(limit=update_limit):
@@ -177,7 +177,9 @@ else:
             lambda x: f"{x*100:.1f}%" if pd.notna(x) else "N/A"
         )
 
-    st.dataframe(display_df, use_container_width=True, height=500)
+    # 1行あたり約35px + ヘッダー38px
+    table_height = 38 + len(display_df) * 35
+    st.dataframe(display_df, use_container_width=True, height=table_height)
 
     st.divider()
     st.subheader("📈 統計サマリー")
