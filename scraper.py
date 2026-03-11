@@ -158,12 +158,17 @@ def is_ba_page(tag: str) -> bool:
     url  = f"https://dic.pixiv.net/a/{quote(tag)}"
     html = selenium_get(url)
     if not html:
+        print(f"[is_ba_page] {tag}: html取得失敗", flush=True)
         return False
     soup    = BeautifulSoup(html, "html.parser")
     article = soup.select_one("article")
     if not article:
+        print(f"[is_ba_page] {tag}: articleタグなし / HTML先頭200: {html[:200]}", flush=True)
         return False
-    return "ブルーアーカイブ" in article.get_text()
+    text   = article.get_text()
+    result = "ブルーアーカイブ" in text
+    print(f"[is_ba_page] {tag}: article文字数={len(text)} BA言及={result} / 先頭100: {text[:100]}", flush=True)
+    return result
 
 
 def _get_search_count(soup) -> int:
