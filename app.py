@@ -42,7 +42,7 @@ def load_csv_from_github():
         return None
 
 
-def trigger_github_actions():
+def trigger_github_actions(limit: int = 1):
     """GitHub Actionsのワークフローを手動トリガー"""
     headers = {
         "Authorization": f"Bearer {GITHUB_TOKEN}",
@@ -50,7 +50,10 @@ def trigger_github_actions():
         "X-GitHub-Api-Version": "2022-11-28",
     }
     url = f"https://api.github.com/repos/{GITHUB_REPO}/actions/workflows/scrape.yml/dispatches"
-    r = requests.post(url, headers=headers, json={"ref": "main"})
+    r = requests.post(url, headers=headers, json={
+        "ref": "main",
+        "inputs": {"update_limit": str(limit)}
+    })
     return r.status_code == 204
 
 
@@ -108,11 +111,13 @@ with st.sidebar:
 
     st.divider()
 
+    update_limit = st.slider("更新するキャラ数", min_value=1, max_value=20, value=1, step=1)
+
     if st.button("🚀 更新を実行", type="primary", use_container_width=True):
-        if trigger_github_actions():
+        if trigger_github_actions(limit=update_limit):
             st.success(
-                "GitHub Actionsを起動しました！\n\n"
-                "10キャラ分を処理します。\n"
+                f"GitHub Actionsを起動しました！\n\n"
+                f"{update_limit} キャラ分を処理します。\n"
                 "完了後に「🔃 データを再読み込み」を押してください。"
             )
         else:

@@ -5,7 +5,7 @@
 import csv
 import os
 import sys
-from scraper import run_scraping, BlockedError
+from scraper import run_scraping, BlockedError, UPDATE_LIMIT
 
 
 def load_existing_csv(filepath):
@@ -114,6 +114,13 @@ def main():
 
     os.makedirs(output_dir, exist_ok=True)
 
+    # 環境変数 UPDATE_LIMIT から件数を取得（未設定ならデフォルト値）
+    try:
+        limit = int(os.environ.get("UPDATE_LIMIT", UPDATE_LIMIT))
+    except ValueError:
+        limit = UPDATE_LIMIT
+    print(f"更新件数: {limit} キャラ", flush=True)
+
     # 既存CSVを2種類の辞書で読み込む
     existing_by_tag  = load_existing_csv(output_file)
     existing_by_name = load_existing_by_name(output_file)
@@ -148,6 +155,7 @@ def main():
     try:
         _, completed, total = run_scraping(
             existing=existing_by_name,
+            limit=limit,
             progress_callback=on_progress,
             status_callback=on_status,
             row_callback=on_row,

@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 
 PAGE_LIMIT    = 10
 EXCLUDE_WORDS = ["生誕祭", "×", "(ブルーアーカイブ)", "ブルアカ"]
-UPDATE_LIMIT  = 10   # 1回の実行で更新するキャラ数
+UPDATE_LIMIT  = 1    # 1回の実行で更新するキャラ数（デフォルト）
 STALE_HOURS   = 24   # 何時間経過したら更新対象とみなすか
 
 # 先生の別衣装は例外処理（固定リスト）
@@ -257,18 +257,22 @@ def get_costume_tags(char: str, is_full: bool) -> list:
 
     if pages > 1:
         for page in range(2, pages + 1):
-            soup_p = _selenium_fetch_search(query, page)
-            found  = 0
-            for article in soup_p.select("article"):
-                h2      = article.select_one("h2 a")
-                work_li = next((li for li in article.select("ul.data li") if "作品数" in li.text), None)
-                if h2 and work_li:
-                    title = h2.text.strip()
-                    count = int(work_li.text.replace("作品数:", "").replace(",", "").strip())
-                    articles[title] = count
-                    found += 1
-            if found == 0:
-                break
+            try:
+                soup_p = _selenium_fetch_search(query, page)
+                found  = 0
+                for article in soup_p.select("article"):
+                    h2      = article.select_one("h2 a")
+                    work_li = next((li for li in article.select("ul.data li") if "作品数" in li.text), None)
+                    if h2 and work_li:
+                        title = h2.text.strip()
+                        count = int(work_li.text.replace("作品数:", "").replace(",", "").strip())
+                        articles[title] = count
+                        found += 1
+                if found == 0:
+                    break
+            except Exception as e:
+                print(f"[WARN] get_costume_tags {char} page={page} スキップ: {e}", flush=True)
+                continue
 
     matched  = {t: c for t, c in articles.items() if char in t}
     costumes = []
@@ -286,17 +290,17 @@ def get_costume_tags(char: str, is_full: bool) -> list:
 # 更新対象キャラ選定
 # ===================================================
 
-def select_targets(characters: list, existing: dict) -> list:
+def select_targets(characters: list, existing: dict, limit: int = UPDATE_LIMIT) -> list:
     """
     Wikiのキャラ一覧を先頭から走査し、
     最終更新が24時間以上経過（またはCSV未収録・日時なし）のキャラを
-    上から最大UPDATE_LIMIT件選んで返す
+    上からlimit件選んで返す
     """
     threshold = datetime.now() - timedelta(hours=STALE_HOURS)
     targets   = []
 
     for chara in characters:
-        if len(targets) >= UPDATE_LIMIT:
+        if len(targets) >= limit:
             break
 
         name = chara["name"]
@@ -427,6 +431,7 @@ def get_kenzen_from_pixiv(tag: str) -> int:
 
 def run_scraping(
     existing=None,
+    limit=UPDATE_LIMIT,
     progress_callback=None,
     status_callback=None,
     row_callback=None,
@@ -435,6 +440,7 @@ def run_scraping(
     """
     スクレイピングのメイン処理
     existing: {名前: {列名: 値}} の既存CSVデータ（Noneなら空扱い）
+    limit:    1回の実行で更新するキャラ数
     リトライしてもブロックされた場合はBlockedErrorを送出
     正常完了時は (rows, completed, total) を返す
     """
@@ -449,8 +455,8 @@ def run_scraping(
     if characters_callback:
         characters_callback(characters)
 
-    # 更新対象キャラを選定（最大UPDATE_LIMIT件）
-    targets = select_targets(characters, existing)
+    # 更新対象キャラを選定
+    targets = select_targets(characters, existing, limit=limit)
 
     if status_callback:
         status_callback(
@@ -466,12 +472,20 @@ def run_scraping(
         club    = chara["club"]
         is_full = chara["is_full"]
 
-        main_tag = resolve_main_tag(name, is_full)
+        try:
+            main_tag = resolve_main_tag(name, is_full)
+        except Exception as e:
+            print(f"[ERROR] resolve_main_tag {name}: {e}", flush=True)
+            main_tag = name
+
         entries.append({"name": name, "tag": main_tag, "school": school, "club": club})
 
-        costumes = get_costume_tags(name, is_full)
-        for ctag in costumes:
-            entries.append({"name": name, "tag": ctag, "school": school, "club": club})
+        try:
+            costumes = get_costume_tags(name, is_full)
+            for ctag in costumes:
+                entries.append({"name": name, "tag": ctag, "school": school, "club": club})
+        except Exception as e:
+            print(f"[ERROR] get_costume_tags {name}: {e}", flush=True)
 
     total_count = len(entries)
 
