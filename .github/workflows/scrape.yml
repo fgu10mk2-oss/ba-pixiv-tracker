@@ -23,8 +23,15 @@ jobs:
       - name: ライブラリインストール
         run: pip install requests beautifulsoup4 selenium webdriver-manager
 
-      - name: Chrome インストール
-        uses: browser-actions/setup-chrome@v1
+      - name: Chrome と ChromeDriver インストール
+        run: |
+          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
+          sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list'
+          sudo apt-get update -q
+          sudo apt-get install -y google-chrome-stable
+          CHROME_VERSION=$(google-chrome --version | grep -oP '\d+\.\d+\.\d+\.\d+')
+          echo "Chrome version: $CHROME_VERSION"
+          pip install --upgrade selenium webdriver-manager
 
       - name: スクレイピング実行
         id: scrape
