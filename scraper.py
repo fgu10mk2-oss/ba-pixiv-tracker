@@ -241,6 +241,7 @@ def get_costume_tags(char: str, is_full: bool) -> list:
     先生は例外処理（固定リスト）
     - フルネームあり   → キャラ名そのままで検索
     - フルネームなし   → キャラ名(ブルーアーカイブ)で検索、結果なければキャラ名で再検索
+    検索結果1件以下の場合は全角スペース付きで再検索（大百科の検索バグ対策）
     """
     if char == "先生":
         return SENSEI_COSTUMES
@@ -254,24 +255,37 @@ def get_costume_tags(char: str, is_full: bool) -> list:
         query    = ba_query if total_ba > 0 else char
 
     # 1ページ目で件数確認
-    soup1  = _fetch_search_soup(query, 1)
-    total  = _get_search_count(soup1)
-    pages  = min(PAGE_LIMIT, max(1, -(-total // 12))) if total > 0 else 1
+    soup1 = _fetch_search_soup(query, 1)
+    total = _get_search_count(soup1)
+    print(f"[COSTUME_SEARCH] {char}: query={query!r} 検索結果 {total} 件", flush=True)
 
-    # 1ページ目の結果を収集
-    articles = {}
-    for article in soup1.select("article"):
-        h2      = article.select_one("h2 a")
-        work_li = next((li for li in article.select("ul.data li") if "作品数" in li.text), None)
-        if h2 and work_li:
-            title = h2.text.strip()
-            count = int(work_li.text.replace("作品数:", "").replace(",", "").strip())
-            articles[title] = count
+    # 検索結果1件以下の場合は全角スペース付きでも検索してマージ（大百科の検索バグ対策）
+    extra_query = None
+    extra_soup1 = None
+    extra_total = 0
+    if total <= 1:
+        extra_query = query + "\u3000"
+        extra_soup1 = _fetch_search_soup(extra_query, 1)
+        extra_total = _get_search_count(extra_soup1)
+        print(f"[COSTUME_SEARCH] {char}: 全角スペース付き query={extra_query!r} 検索結果 {extra_total} 件", flush=True)
 
-    if pages > 1:
-        for page in range(2, pages + 1):
+    pages       = min(PAGE_LIMIT, max(1, -(-total // 12))) if total > 0 else 1
+    extra_pages = min(PAGE_LIMIT, max(1, -(-extra_total // 12))) if extra_total > 0 else 0
+    print(f"[COSTUME_SEARCH] {char}: 通常 {pages} ページ / 全角スペース {extra_pages} ページ取得します", flush=True)
+
+    def collect_articles(soup_first, q, max_pages) -> dict:
+        """検索結果ページから {タグ名: 作品数} を収集"""
+        result = {}
+        for article in soup_first.select("article"):
+            h2      = article.select_one("h2 a")
+            work_li = next((li for li in article.select("ul.data li") if "作品数" in li.text), None)
+            if h2 and work_li:
+                title = h2.text.strip()
+                count = int(work_li.text.replace("作品数:", "").replace(",", "").strip())
+                result[title] = count
+        for page in range(2, max_pages + 1):
             try:
-                soup_p = _fetch_search_soup(query, page)
+                soup_p = _fetch_search_soup(q, page)
                 found  = 0
                 for article in soup_p.select("article"):
                     h2      = article.select_one("h2 a")
@@ -279,22 +293,35 @@ def get_costume_tags(char: str, is_full: bool) -> list:
                     if h2 and work_li:
                         title = h2.text.strip()
                         count = int(work_li.text.replace("作品数:", "").replace(",", "").strip())
-                        articles[title] = count
+                        result[title] = count
                         found += 1
                 if found == 0:
                     break
             except Exception as e:
                 print(f"[WARN] get_costume_tags {char} page={page} スキップ: {e}", flush=True)
-                continue
+        return result
 
-    matched  = {t: c for t, c in articles.items() if char in t}
+    # 通常クエリで収集
+    articles = collect_articles(soup1, query, pages)
+
+    # 全角スペース付きクエリでも収集してマージ
+    if extra_soup1 and extra_total > 0:
+        extra_articles = collect_articles(extra_soup1, extra_query, extra_pages)
+        articles.update(extra_articles)
+
+    matched = {t: c for t, c in articles.items() if char in t}
+    print(f"[COSTUME_SEARCH] {char}: matched候補 {list(matched.keys())}", flush=True)
+
     costumes = []
     for tag in matched:
         if not is_costume_tag(char, tag):
+            print(f"[COSTUME_SKIP] {tag}: is_costume_tag=False", flush=True)
             continue
         if is_ba_page(tag):
             costumes.append(tag)
             print(f"[COSTUME] {char} → {tag}", flush=True)
+        else:
+            print(f"[COSTUME_SKIP] {tag}: is_ba_page=False", flush=True)
 
     return costumes
 
