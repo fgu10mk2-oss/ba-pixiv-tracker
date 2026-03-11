@@ -122,7 +122,7 @@ def selenium_get(url: str, retry: bool = False) -> str:
     driver = create_driver()
     try:
         driver.get(url)
-        time.sleep(random.uniform(4.0, 6.0))
+        time.sleep(random.uniform(7.0, 10.0))
         html  = driver.page_source
         title = driver.title
         if "Just a moment" in html or "Just a moment" in title:
@@ -135,8 +135,22 @@ def selenium_get(url: str, retry: bool = False) -> str:
                 print(f"[BLOCK→FAIL] {url}: リトライもブロックされました", flush=True)
                 return ""
         return html
+    except Exception as e:
+        print(f"[ERROR] selenium_get {url}: {e}", flush=True)
+        if not retry:
+            print(f"[RETRY] 20秒待ってリトライします", flush=True)
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            time.sleep(20)
+            return selenium_get(url, retry=True)
+        return ""
     finally:
-        driver.quit()
+        try:
+            driver.quit()
+        except Exception:
+            pass
 
 
 def is_ba_page(tag: str) -> bool:
@@ -335,7 +349,8 @@ def create_driver():
     )
     service = Service(ChromeDriverManager().install())
     driver  = webdriver.Chrome(service=service, options=options)
-    driver.set_page_load_timeout(60)
+    driver.set_page_load_timeout(120)
+    driver.set_script_timeout(120)
     return driver
 
 
@@ -349,7 +364,7 @@ def fetch_one(tag: str, retry: bool = False) -> int:
     try:
         url = f"https://dic.pixiv.net/a/{quote(tag)}"
         driver.get(url)
-        time.sleep(random.uniform(5.0, 7.0))
+        time.sleep(random.uniform(7.0, 10.0))
         html  = driver.page_source
         title = driver.title
 
@@ -366,8 +381,23 @@ def fetch_one(tag: str, retry: bool = False) -> int:
         m = re.findall(r'"pixivWorkCount":(\d+)', html)
         return int(m[0]) if m else 0
 
+    except Exception as e:
+        print(f"[ERROR] fetch_one {tag}: {e}", flush=True)
+        if not retry:
+            print(f"[RETRY] 20秒待ってリトライします", flush=True)
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            time.sleep(20)
+            return fetch_one(tag, retry=True)
+        return -1
+
     finally:
-        driver.quit()
+        try:
+            driver.quit()
+        except Exception:
+            pass
 
 
 # ===================================================
