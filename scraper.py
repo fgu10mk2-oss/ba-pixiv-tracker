@@ -487,7 +487,8 @@ def run_scraping(
             f"更新対象: {len(targets)} 件。別衣装タグを調査中..."
         )
 
-    # 各キャラのメイン＋別衣装タグを展開
+    # 各キャラのメイン＋別衣装タグを展開（失敗時は最大3回リトライ）
+    MAX_CHARA_RETRY = 3
     entries = []
     for chara in targets:
         name    = chara["name"]
@@ -495,20 +496,29 @@ def run_scraping(
         club    = chara["club"]
         is_full = chara["is_full"]
 
-        try:
-            main_tag = resolve_main_tag(name, is_full)
-        except Exception as e:
-            print(f"[ERROR] resolve_main_tag {name}: {e}", flush=True)
-            main_tag = name
+        chara_entries = None
+        for attempt in range(1, MAX_CHARA_RETRY + 1):
+            try:
+                main_tag = resolve_main_tag(name, is_full)
+                costumes = get_costume_tags(name, is_full)
 
-        entries.append({"name": name, "tag": main_tag, "school": school, "club": club})
+                chara_entries = [{"name": name, "tag": main_tag, "school": school, "club": club}]
+                for ctag in costumes:
+                    chara_entries.append({"name": name, "tag": ctag, "school": school, "club": club})
+                break  # 成功したらリトライループを抜ける
 
-        try:
-            costumes = get_costume_tags(name, is_full)
-            for ctag in costumes:
-                entries.append({"name": name, "tag": ctag, "school": school, "club": club})
-        except Exception as e:
-            print(f"[ERROR] get_costume_tags {name}: {e}", flush=True)
+            except Exception as e:
+                print(f"[WARN] {name} 別衣装調査失敗 (試行{attempt}/{MAX_CHARA_RETRY}): {e}", flush=True)
+                if attempt < MAX_CHARA_RETRY:
+                    print(f"[RETRY] 10秒後に再試行します", flush=True)
+                    time.sleep(10)
+                else:
+                    print(f"[SKIP] {name}: {MAX_CHARA_RETRY}回失敗、このキャラをスキップします", flush=True)
+
+        if chara_entries:
+            entries.extend(chara_entries)
+        else:
+            print(f"[SKIP] {name}: 未更新のままにします", flush=True)
 
     total_count = len(entries)
 
