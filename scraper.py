@@ -101,7 +101,7 @@ def get_character_list():
 
 
 # ===================================================
-# 別衣装タグ取得（requests）
+# 別衣装タグ取得（Selenium版）
 # ===================================================
 
 def is_costume_tag(char: str, tag: str) -> bool:
@@ -113,21 +113,43 @@ def is_costume_tag(char: str, tag: str) -> bool:
     return True
 
 
-def is_ba_page(tag: str) -> bool:
-    """articleタグの本文テキストにブルーアーカイブの言及があるか"""
+def selenium_get(url: str, retry: bool = False) -> str:
+    """
+    Seleniumで指定URLのpage_sourceを取得して返す（1回ごとドライバー起動・終了）
+    Cloudflareブロック時: retry=Falseなら15秒待ってリトライ
+                          retry=Trueなら空文字を返す
+    """
+    driver = create_driver()
     try:
-        url = f"https://dic.pixiv.net/a/{quote(tag)}"
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        if r.status_code == 404:
-            return False
-        soup = BeautifulSoup(r.text, "html.parser")
-        article = soup.select_one("article")
-        if not article:
-            return False
-        return "ブルーアーカイブ" in article.get_text()
-    except Exception as e:
-        print(f"[ERROR] is_ba_page {tag}: {e}", flush=True)
+        driver.get(url)
+        time.sleep(random.uniform(4.0, 6.0))
+        html  = driver.page_source
+        title = driver.title
+        if "Just a moment" in html or "Just a moment" in title:
+            if not retry:
+                print(f"[BLOCK→RETRY] {url}: ブロック検知、15秒待ってリトライします", flush=True)
+                driver.quit()
+                time.sleep(15)
+                return selenium_get(url, retry=True)
+            else:
+                print(f"[BLOCK→FAIL] {url}: リトライもブロックされました", flush=True)
+                return ""
+        return html
+    finally:
+        driver.quit()
+
+
+def is_ba_page(tag: str) -> bool:
+    """articleタグの本文テキストにブルーアーカイブの言及があるか（Selenium版）"""
+    url  = f"https://dic.pixiv.net/a/{quote(tag)}"
+    html = selenium_get(url)
+    if not html:
         return False
+    soup    = BeautifulSoup(html, "html.parser")
+    article = soup.select_one("article")
+    if not article:
+        return False
+    return "ブルーアーカイブ" in article.get_text()
 
 
 def _get_search_count(soup) -> int:
@@ -139,15 +161,21 @@ def _get_search_count(soup) -> int:
     return 0
 
 
+def _selenium_fetch_search(query: str, page: int) -> BeautifulSoup:
+    """大百科検索ページをSeleniumで取得してBeautifulSoupを返す"""
+    url  = f"https://dic.pixiv.net/search?query={quote(query)}&page={page}"
+    html = selenium_get(url)
+    return BeautifulSoup(html, "html.parser") if html else BeautifulSoup("", "html.parser")
+
+
 def _fetch_articles(query: str, max_pages: int) -> dict:
+    """検索結果から {タグ名: 作品数} を取得（Selenium版）"""
     articles = {}
     for page in range(1, max_pages + 1):
-        url = f"https://dic.pixiv.net/search?query={quote(query)}&page={page}"
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        soup = BeautifulSoup(r.text, "html.parser")
+        soup  = _selenium_fetch_search(query, page)
         found = 0
         for article in soup.select("article"):
-            h2 = article.select_one("h2 a")
+            h2      = article.select_one("h2 a")
             work_li = next((li for li in article.select("ul.data li") if "作品数" in li.text), None)
             if h2 and work_li:
                 title = h2.text.strip()
@@ -156,43 +184,37 @@ def _fetch_articles(query: str, max_pages: int) -> dict:
                 found += 1
         if found == 0:
             break
-        time.sleep(1.0)
     return articles
 
 
 def resolve_main_tag(char: str, is_full: bool) -> str:
     """
-    メインタグを決定する
+    メインタグを決定する（Selenium版）
     - フルネームあり → キャラ名そのまま
-    - フルネームなし → 大百科検索で「キャラ名(ブルーアーカイブ)」がヒットすればそれ、なければキャラ名そのまま
+    - フルネームなし → 大百科検索で「キャラ名(ブルーアーカイブ)」完全一致があればそれ、なければキャラ名そのまま
     """
     if is_full:
         return char
 
     ba_tag = f"{char}(ブルーアーカイブ)"
-    try:
-        url = f"https://dic.pixiv.net/search?query={quote(ba_tag)}&page=1"
-        r   = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        soup = BeautifulSoup(r.text, "html.parser")
-        # 検索結果にba_tagと完全一致するタイトルがあれば採用
-        for article in soup.select("article"):
-            h2 = article.select_one("h2 a")
-            if h2 and h2.text.strip() == ba_tag:
-                return ba_tag
-    except Exception as e:
-        print(f"[ERROR] resolve_main_tag {ba_tag}: {e}", flush=True)
+    soup   = _selenium_fetch_search(ba_tag, 1)
+    for article in soup.select("article"):
+        h2 = article.select_one("h2 a")
+        if h2 and h2.text.strip() == ba_tag:
+            print(f"[TAG] {char} → {ba_tag} (BA付き確認)", flush=True)
+            return ba_tag
 
+    print(f"[TAG] {char} → {char} (BA付きなし)", flush=True)
     return char
 
 
 def get_costume_tags(char: str, is_full: bool) -> list:
     """
-    キャラクターの別衣装タグ一覧を返す
+    キャラクターの別衣装タグ一覧を返す（Selenium版）
     先生は例外処理（固定リスト）
-    - フルネームあり → キャラ名そのままで検索
-    - フルネームなし → キャラ名(ブルーアーカイブ)で検索、0件ならキャラ名で再検索
+    - フルネームあり   → キャラ名そのままで検索
+    - フルネームなし   → キャラ名(ブルーアーカイブ)で検索、結果なければキャラ名で再検索
     """
-    # 先生は固定リスト
     if char == "先生":
         return SENSEI_COSTUMES
 
@@ -200,33 +222,48 @@ def get_costume_tags(char: str, is_full: bool) -> list:
         query = char
     else:
         ba_query = f"{char}(ブルーアーカイブ)"
-        r_ba = requests.get(
-            f"https://dic.pixiv.net/search?query={quote(ba_query)}&page=1",
-            headers={"User-Agent": "Mozilla/5.0"}, timeout=10
-        )
-        total_ba = _get_search_count(BeautifulSoup(r_ba.text, "html.parser"))
-        time.sleep(1.0)
-        # (BA)付きで検索結果があればそのクエリ、なければそのまま
-        query = ba_query if total_ba > 0 else char
+        soup_ba  = _selenium_fetch_search(ba_query, 1)
+        total_ba = _get_search_count(soup_ba)
+        query    = ba_query if total_ba > 0 else char
 
-    r1 = requests.get(
-        f"https://dic.pixiv.net/search?query={quote(query)}&page=1",
-        headers={"User-Agent": "Mozilla/5.0"}, timeout=10
-    )
-    total = _get_search_count(BeautifulSoup(r1.text, "html.parser"))
-    time.sleep(1.0)
+    # 1ページ目で件数確認
+    soup1  = _selenium_fetch_search(query, 1)
+    total  = _get_search_count(soup1)
+    pages  = min(PAGE_LIMIT, max(1, -(-total // 12))) if total > 0 else 1
 
-    pages        = min(PAGE_LIMIT, max(1, -(-total // 12))) if total > 0 else 1
-    all_articles = _fetch_articles(query, pages)
-    matched      = {t: c for t, c in all_articles.items() if char in t}
+    # 1ページ目の結果を再利用、2ページ目以降はSeleniumで追加取得
+    articles = {}
+    for article in soup1.select("article"):
+        h2      = article.select_one("h2 a")
+        work_li = next((li for li in article.select("ul.data li") if "作品数" in li.text), None)
+        if h2 and work_li:
+            title = h2.text.strip()
+            count = int(work_li.text.replace("作品数:", "").replace(",", "").strip())
+            articles[title] = count
 
+    if pages > 1:
+        for page in range(2, pages + 1):
+            soup_p = _selenium_fetch_search(query, page)
+            found  = 0
+            for article in soup_p.select("article"):
+                h2      = article.select_one("h2 a")
+                work_li = next((li for li in article.select("ul.data li") if "作品数" in li.text), None)
+                if h2 and work_li:
+                    title = h2.text.strip()
+                    count = int(work_li.text.replace("作品数:", "").replace(",", "").strip())
+                    articles[title] = count
+                    found += 1
+            if found == 0:
+                break
+
+    matched  = {t: c for t, c in articles.items() if char in t}
     costumes = []
     for tag in matched:
         if not is_costume_tag(char, tag):
             continue
         if is_ba_page(tag):
             costumes.append(tag)
-        time.sleep(1.0)
+            print(f"[COSTUME] {char} → {tag}", flush=True)
 
     return costumes
 
