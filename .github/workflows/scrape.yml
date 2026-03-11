@@ -2,6 +2,11 @@ name: スクレイピング実行
 
 on:
   workflow_dispatch:
+    inputs:
+      update_limit:
+        description: '更新するキャラ数'
+        required: false
+        default: '1'
   schedule:
     - cron: '0 18 * * 0'  # 毎週日曜 午前3時JST
 
@@ -35,6 +40,8 @@ jobs:
 
       - name: スクレイピング実行
         id: scrape
+        env:
+          UPDATE_LIMIT: ${{ github.event.inputs.update_limit || '1' }}
         run: python run_scrape.py
         continue-on-error: true
 
