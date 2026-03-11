@@ -236,16 +236,21 @@ def get_costume_tags(char: str, is_full: bool) -> list:
         query = char
     else:
         ba_query = f"{char}(ブルーアーカイブ)"
+        print(f"[COSTUME_SEARCH] {char}: BA付きクエリで検索中...", flush=True)
         soup_ba  = _selenium_fetch_search(ba_query, 1)
         total_ba = _get_search_count(soup_ba)
+        print(f"[COSTUME_SEARCH] {char}: BA付き検索結果 {total_ba} 件", flush=True)
         query    = ba_query if total_ba > 0 else char
+
+    print(f"[COSTUME_SEARCH] {char}: query={query} で検索開始", flush=True)
 
     # 1ページ目で件数確認
     soup1  = _selenium_fetch_search(query, 1)
     total  = _get_search_count(soup1)
     pages  = min(PAGE_LIMIT, max(1, -(-total // 12))) if total > 0 else 1
+    print(f"[COSTUME_SEARCH] {char}: 検索結果 {total} 件 / {pages} ページ", flush=True)
 
-    # 1ページ目の結果を再利用、2ページ目以降はSeleniumで追加取得
+    # 1ページ目の結果を収集
     articles = {}
     for article in soup1.select("article"):
         h2      = article.select_one("h2 a")
@@ -274,14 +279,20 @@ def get_costume_tags(char: str, is_full: bool) -> list:
                 print(f"[WARN] get_costume_tags {char} page={page} スキップ: {e}", flush=True)
                 continue
 
-    matched  = {t: c for t, c in articles.items() if char in t}
+    matched = {t: c for t, c in articles.items() if char in t}
+    print(f"[COSTUME_SEARCH] {char}: matched候補 {list(matched.keys())}", flush=True)
+
     costumes = []
     for tag in matched:
         if not is_costume_tag(char, tag):
+            print(f"[COSTUME_SKIP] {tag}: is_costume_tag=False", flush=True)
             continue
+        print(f"[COSTUME_CHECK] {tag}: is_ba_page確認中...", flush=True)
         if is_ba_page(tag):
             costumes.append(tag)
             print(f"[COSTUME] {char} → {tag}", flush=True)
+        else:
+            print(f"[COSTUME_SKIP] {tag}: is_ba_page=False", flush=True)
 
     return costumes
 
