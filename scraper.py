@@ -154,20 +154,16 @@ def selenium_get(url: str, retry: bool = False) -> str:
 
 
 def is_ba_page(tag: str) -> bool:
-    """articleタグの本文テキストにブルーアーカイブの言及があるか（requests版）"""
-    try:
-        url  = f"https://dic.pixiv.net/a/{quote(tag)}"
-        r    = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        if r.status_code == 404:
-            return False
-        soup    = BeautifulSoup(r.text, "html.parser")
-        article = soup.select_one("article")
-        if not article:
-            return False
-        return "ブルーアーカイブ" in article.get_text()
-    except Exception as e:
-        print(f"[ERROR] is_ba_page {tag}: {e}", flush=True)
+    """articleタグの本文テキストにブルーアーカイブの言及があるか（Selenium版）"""
+    url  = f"https://dic.pixiv.net/a/{quote(tag)}"
+    html = selenium_get(url)
+    if not html:
         return False
+    soup    = BeautifulSoup(html, "html.parser")
+    article = soup.select_one("article")
+    if not article:
+        return False
+    return "ブルーアーカイブ" in article.get_text()
 
 
 def _get_search_count(soup) -> int:
@@ -180,14 +176,10 @@ def _get_search_count(soup) -> int:
 
 
 def _fetch_search_soup(query: str, page: int) -> BeautifulSoup:
-    """大百科検索ページをrequestsで取得してBeautifulSoupを返す"""
-    try:
-        url = f"https://dic.pixiv.net/search?query={quote(query)}&page={page}"
-        r   = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        return BeautifulSoup(r.text, "html.parser")
-    except Exception as e:
-        print(f"[ERROR] _fetch_search_soup {query} p={page}: {e}", flush=True)
-        return BeautifulSoup("", "html.parser")
+    """大百科検索ページをSeleniumで取得してBeautifulSoupを返す"""
+    url  = f"https://dic.pixiv.net/search?query={quote(query)}&page={page}"
+    html = selenium_get(url)
+    return BeautifulSoup(html, "html.parser") if html else BeautifulSoup("", "html.parser")
 
 
 def _fetch_articles(query: str, max_pages: int) -> dict:
